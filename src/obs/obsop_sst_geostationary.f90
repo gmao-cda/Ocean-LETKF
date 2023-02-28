@@ -120,7 +120,7 @@ PROGRAM obsop_sst_acspo
     elem(i) = obs_data(i)%typ
     rlon(i) = obs_data(i)%x_grd(1)
     rlat(i) = obs_data(i)%x_grd(2)
-!   rlev(i) = obs_data(i)%x_grd(3) !STEVE: not applicable for SST
+    rlev(i) = 0.0
     odat(i) = obs_data(i)%value
     oerr(i) = obs_data(i)%oerr
     ohx(i)  = 0
