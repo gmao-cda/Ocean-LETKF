@@ -23,7 +23,6 @@ MODULE common_mpi_oceanmodel
   INTEGER,ALLOCATABLE,SAVE :: nij1node(:)
   REAL(r_size),ALLOCATABLE,SAVE :: phi1(:)
   REAL(r_size),ALLOCATABLE,SAVE :: kmt1(:)         !(OCEAN)
-  !REAL(r_size),ALLOCATABLE,SAVE :: dx1(:),dy1(:)
   REAL(r_size),ALLOCATABLE,SAVE :: lon1(:),lat1(:)
   REAL(r_size),ALLOCATABLE,SAVE :: i1(:),j1(:)     !(OCEAN) splits grid coordinates out into list like ijs
 
@@ -38,7 +37,6 @@ CONTAINS
 SUBROUTINE set_common_mpi_oceanmodel
 
   USE params_model, ONLY: nlon, nlat
-  !USE vars_model,   ONLY: dx, dy
   USE vars_model,   ONLY: lon, lat, kmt0, phi0
   USE vars_model,   ONLY: lon2d, lat2d !, lev2d !STEVE: I'm assuming I'll need this one day
 
@@ -84,8 +82,6 @@ SUBROUTINE set_common_mpi_oceanmodel
   if (dodebug) WRITE(6,*) "ALLOCATING fields to convert to vectorized form..."
   ALLOCATE(phi1(nij1))
   ALLOCATE(kmt1(nij1))               !(OCEAN)
-  !ALLOCATE(dx1(nij1))
-  !ALLOCATE(dy1(nij1))
   ALLOCATE(lon1(nij1))
   ALLOCATE(lat1(nij1))
   ALLOCATE(i1(nij1))                 !(OCEAN)
@@ -117,15 +113,12 @@ SUBROUTINE set_common_mpi_oceanmodel
   if (dodebug) WRITE(6,*) "Calling scatter_grd_mpi_small..."
   CALL scatter_grd_mpi_small(0,v2dg,v2d,nlon,nlat,nv0)
 
-  !dx1(:)  = v2d(:,1)
-  !dy1(:)  = v2d(:,2)
   lon1(:) = v2d(:,3)
   lat1(:) = v2d(:,4)
   kmt1(:) = v2d(:,5)                 !(OCEAN)
   phi1(:) = v2d(:,6)                 !(OCEAN)
   i1(:)   = v2d(:,7)                 !(OCEAN)
   j1(:)   = v2d(:,8)                 !(OCEAN)
-  !lev1(:) = v2d(:,9)
 
   DEALLOCATE(v2d,v2dg)
   if (dodebug) WRITE(6,*) "Finished set_common_mpi_oceanmodel..."
