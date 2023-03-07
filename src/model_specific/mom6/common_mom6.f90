@@ -30,7 +30,7 @@ SUBROUTINE set_common_oceanmodel
   USE params_model, ONLY: nlon, nlat, nlev
   USE params_model, ONLY: nlon2d, nlat2d
   USE vars_model,   ONLY: SSHclm_m, lon, lat, lon2d, lat2d, lev
-  USE vars_model,   ONLY: dx, dy, area_t
+  USE vars_model,   ONLY: dx, dy
   USE vars_model,   ONLY: height, kmt, depth, wet, phi0, kmt0
   USE vars_model,   ONLY: set_vars_model
   USE params_model, ONLY: initialize_params_model
@@ -132,6 +132,7 @@ SUBROUTINE set_common_oceanmodel
 
   WRITE(6,*) "lat2d(1,1) = ", lat2d(1,1)
   WRITE(6,*) "lat2d(nlon,nlat) = ", lat2d(nlon,nlat)
+  WRITE(6,*) "CDA_DEBUG: no_area_t"
 
   !STEVE: I don't really need this anymore with the kdtree-based search
   if (.true.) then !STEVE: this is TEMPORARY, until I figure out how to use the ocean_hgrid.nc data
@@ -139,7 +140,6 @@ SUBROUTINE set_common_oceanmodel
     j=0
     dx=0.0
     dy=0.0
-    area_t=0.0
     do j=2,nlat-1
       dlat = (lat(j+1) - lat(j-1))/2.0
       d2 = (sin(dlat/2.0))**2 
@@ -151,7 +151,6 @@ SUBROUTINE set_common_oceanmodel
         d2 = cos(lat(j-1)) * cos(lat(j+1)) * (sin(dlon/2.0))**2
         d3 = 2 * atan2( sqrt(d2), sqrt(1-d2) ) 
         dx(i,j) = re * d3
-        area_t(i,j) = dx(i,j)*dy(i,j)
       enddo
     enddo
   endif
@@ -287,7 +286,6 @@ SUBROUTINE read_diag(infile,v3d,v2d,prec_in)
   USE params_model, ONLY: nv3d, nv2d
   USE params_model, ONLY: iv3d_u, iv3d_v, iv3d_t, iv3d_s
   USE params_model, ONLY: iv2d_sst, iv2d_sss, iv2d_ssh
-  USE params_model, ONLY: diag_lon_name, diag_lat_name, diag_lev_name
   USE params_model, ONLY: diag_temp_name, diag_salt_name
   USE params_model, ONLY: diag_u_name, diag_v_name, diag_h_name
   USE params_model, ONLY: diag_ssh_name, diag_sst_name, diag_sss_name
@@ -726,7 +724,6 @@ SUBROUTINE read_restart(infile,v3d,v2d,prec)
   USE params_letkf, ONLY: DO_UPDATE_H
   USE vars_model,   ONLY: SSHclm_m
   USE params_model, ONLY: rsrt_tsbase, rsrt_uvbase, rsrt_hbase
-  USE params_model, ONLY: rsrt_lon_name, rsrt_lat_name, rsrt_lev_name
   USE params_model, ONLY: rsrt_temp_name, rsrt_salt_name
   USE params_model, ONLY: rsrt_u_name, rsrt_v_name
   USE params_model, ONLY: rsrt_h_name, rsrt_ssh_name
@@ -1008,7 +1005,6 @@ SUBROUTINE write_restart(outfile,v3d_in,v2d_in,prec)
   USE params_letkf, ONLY: DO_UPDATE_H, DO_SLA
   USE vars_model,   ONLY: SSHclm_m
   USE params_model, ONLY: rsrt_tsbase, rsrt_uvbase, rsrt_hbase
-  USE params_model, ONLY: rsrt_lon_name, rsrt_lat_name, rsrt_lev_name
   USE params_model, ONLY: rsrt_temp_name, rsrt_salt_name
   USE params_model, ONLY: rsrt_u_name, rsrt_v_name
   USE params_model, ONLY: rsrt_h_name, rsrt_ssh_name
