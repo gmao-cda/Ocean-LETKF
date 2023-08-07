@@ -215,6 +215,21 @@ SUBROUTINE read_viirs_nc(obsinfile, min_quality_level, obs_data, nobs, Syyyymmdd
   end where
 
 !-------------------------------------------------------------------------------
+! Read the indicies of SST front position.
+! sst_front_position:comment = "Binary indicator of SST front position 
+! in the valid SST clear-sky domain: 1 - SST front present, 0 - no front present"
+!
+! Currently we remove SST at fronts to avoid large increments
+!-------------------------------------------------------------------------------
+  CALL nc_rdvar2d(fid, "sst_front_position", i1buf2d)
+  i2buf2d = 0 ! use at counter
+  where (i1buf2d==1)
+    valid = .false.
+    i2buf2d = 1
+  end where
+  WRITE(6,*) "[msg] read_viirs_nc::# of SST at fronts=", sum(int(i2buf2d,4))
+
+!-------------------------------------------------------------------------------
 ! Read the Quality Key (5 is best quality; 0 missing data)
 ! 5    == best_quality
 ! 4-2  == not used
