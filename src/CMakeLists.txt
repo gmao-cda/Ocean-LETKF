@@ -56,6 +56,7 @@ set (SRCS
   obs/params_obs.f90
   obs/compute_profile_error.f90
   obs/read_argo.f90
+  obs/read_en4.f90
   obs/read_avhrr_pathfinder.f90
   obs/read_geostationary.f90
   obs/read_viirs.f90
@@ -94,6 +95,8 @@ set(operators
   sss
   tprof
   sprof
+  en4_tprof
+  en4_sprof
   icefrac
   )
 foreach(operator ${operators})
@@ -108,6 +111,7 @@ endforeach()
 set(decoders
   sst_viirs
   sss_smap
+  en4
   )
 foreach(decoder ${decoders})
   add_executable(OCN.decoder.${decoder}.x obs/decoder_${decoder}.f90)
