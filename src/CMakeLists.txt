@@ -53,6 +53,7 @@ set (SRCS
 #--
 # from obs/
   obs/w3movdat_full.f
+  obs/m_datetime.f90
   obs/params_obs.f90
   obs/compute_profile_error.f90
   obs/read_argo.f90
