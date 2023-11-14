@@ -227,7 +227,9 @@ subroutine check_date_fields_(year,month,day)
   character(*),parameter :: myname = trim(modname)//"::check_date_fields_"
   if (year<1978 .or. year>9999) then 
   !if (year<1 .or. year>9999) then
-     write(lout_log,*) "[err] "//trim(myname)//": invalid year range (year<1 .or. year>9999) for year:", year
+     !write(lout_log,*) "[err] "//trim(myname)//": invalid year range (year<1 .or. year>9999) for year:", year
+     ! currently, cannot work on date before 1978 due to limitation of w3 lib
+     write(lout_log,*) "[err] "//trim(myname)//": invalid year range (year<1978 .or. year>9999) for year:", year
      stop (20)
   endif
   if (month<1 .or. month>12) then

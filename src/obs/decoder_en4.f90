@@ -1,14 +1,12 @@
 PROGRAM decoder_en4
   USE common
   USE params_model
+  USE params_obs, only : id_s_obs, id_t_obs
   USE vars_model
   USE common_oceanmodel
   !USE vars_obs
   USE common_obs_oceanmodel
-  USE read_smap,     ONLY: sss_data, read_jpl_smap_l2_sss_h5, &
-                           read_jpl_smap_l3_sss_nc    
-
-  USE read_en4,      ONLY: argo_data 
+  USE read_en4,      ONLY: argo_data, read_en4_nc
 
   IMPLICIT NONE
 
@@ -17,13 +15,13 @@ PROGRAM decoder_en4
   !-----------------------------------------------------------------------------
   CHARACTER(slen) :: obsinfile='obsin.nc'     !IN (default)
   CHARACTER(slen) :: obsoutfile='obsout.dat'  !OUT(default)
-  INTEGER      :: obs_level = -1       !CDA: read level-2 smap if obs_level=2,
-                                       !CDA:      level-3 smap if obs_level=3
+  CHARACTER(slen) :: ovar = "potm" ! IN (default), or "psal"
+  INTEGER      :: otyp = id_t_obs
 
   !-----------------------------------------------------------------------------
   ! Obs data arrays
   !-----------------------------------------------------------------------------
-  TYPE(sss_data), ALLOCATABLE :: obs_data(:)
+  TYPE(argo_data), ALLOCATABLE :: obs_data(:)
   INTEGER :: nobs
   CHARACTER(10) :: Syyyymmddhh = "YYYYMMDDHH"
   !                 1234567890
@@ -50,6 +48,8 @@ PROGRAM decoder_en4
   !STEVE: to adjust writing to output file
   LOGICAL :: print1st = .true.
 
+  CHARACTER(*),PARAMETER :: myname = "decoder_en4"
+
   !-----------------------------------------------------------------------------
   ! Initialize the common_oceanmodel module, and process command line options
   !-----------------------------------------------------------------------------
@@ -59,21 +59,23 @@ PROGRAM decoder_en4
   !-----------------------------------------------------------------------------
   ! Read observations from file
   !-----------------------------------------------------------------------------
-  SELECT CASE(obs_level) 
-    CASE(2)
-      if (delta_seconds>0) then
-          CALL read_jpl_smap_l2_sss_h5(trim(obsinfile), obs_data, nobs, &
-                                       Syyyymmddhh, delta_seconds)
-      else
-          CALL read_jpl_smap_l2_sss_h5(trim(obsinfile), obs_data, nobs)
-      end if
-    CASE(3)
-      CALL read_jpl_smap_l3_sss_nc(trim(obsinfile), obs_data, nobs)
+  SELECT CASE(trim(ovar)) 
+    CASE("potm")
+      otyp = id_t_obs
+    CASE ("psal")
+      otyp = id_s_obs
     CASE DEFAULT
-      WRITE(6,*) "[err] decoder_sss_smap.f90::Unsupported obs_level=", obs_level, &
-                 ". obs_level supported should either be 2 or 3"
+      WRITE(6,*) "[err] "//trim(myname)//"::Unsupported ovar=", trim(ovar), &
+                 ". ovar supported should either be ptemp or psal"
       STOP (10)
   END SELECT
+ 
+  WRITE(6,*) "[msg] "//trim(myname)//"::ovar, otyp=", trim(ovar),otyp
+  if (delta_seconds>0) then
+     CALL read_en4_nc(trim(obsinfile),otyp,obs_data,nobs,Syyyymmddhh, delta_seconds)
+  else
+     CALL read_en4_nc(trim(obsinfile),otyp,obs_data,nobs)
+  endif
 
   ALLOCATE( elem(nobs) )
   ALLOCATE( rlon(nobs) )
@@ -85,12 +87,12 @@ PROGRAM decoder_en4
   ALLOCATE( oqc(nobs) )
   ALLOCATE( obhr(nobs) )
 
-  print *, "decoder_sss_smap.f90:: starting nobs = ", nobs
+  print *, "[msg] "//trim(myname)//":: starting nobs = ", nobs
   do i=1,nobs
     elem(i) = obs_data(i)%typ
     rlon(i) = obs_data(i)%x_grd(1)
     rlat(i) = obs_data(i)%x_grd(2)
-    rlev(i) = 0.d0 
+    rlev(i) = obs_data(i)%x_grd(3)
     odat(i) = obs_data(i)%value
     oerr(i) = obs_data(i)%oerr
     ohx(i)  = 0
@@ -98,6 +100,8 @@ PROGRAM decoder_en4
     obhr(i) = obs_data(i)%hour
   enddo
   DEALLOCATE(obs_data)
+
+  CALL inspect_letkf_obs()
 
   if (print1st) then  
     i=1
@@ -113,6 +117,21 @@ PROGRAM decoder_en4
 
 CONTAINS
 
+SUBROUTINE inspect_letkf_obs()
+  IMPLICIT NONE
+
+  WRITE(6,*) "nobs = ", size(elem)
+  WRITE(6,*) "elem: min, max=", minval(elem), maxval(elem)
+  WRITE(6,*) "rlon: min, max=", minval(rlon), maxval(rlon)
+  WRITE(6,*) "rlat: min, max=", minval(rlat), maxval(rlat)
+  WRITE(6,*) "rlev: min, max=", minval(rlev), maxval(rlev)
+  WRITE(6,*) "odat: min, max=", minval(odat), maxval(odat)
+  WRITE(6,*) "oerr: min, max=", minval(oerr), maxval(oerr)
+  WRITE(6,*) "ohx:  min, max=", minval(ohx),  maxval(ohx)
+  WRITE(6,*) "oqc:  min, max=", minval(oqc),  maxval(oqc)
+ 
+ENDSUBROUTINE 
+
 SUBROUTINE process_command_line
 !===============================================================================
 ! Process command line arguments 
@@ -127,34 +146,33 @@ INTEGER, DIMENSION(3) :: values
 ! inputs are in the format "-x xxx"
 do i=1,COMMAND_ARGUMENT_COUNT(),2
   CALL GET_COMMAND_ARGUMENT(i,arg1)
-  PRINT *, "In obsop_sst_podaac.f90::"
-  PRINT *, "Argument ", i, " = ",TRIM(arg1)
+  WRITE(6,*) "[msg] "//trim(myname)//":: "
+  WRITE(6,*) "Argument ", i, " = ",TRIM(arg1)
 
   select case (arg1)
     case('-obsin')
       CALL GET_COMMAND_ARGUMENT(i+1,arg2)
-      PRINT *, "Argument ", i+1, " = ",TRIM(arg2)
+      WRITE(6,*) "Argument ", i+1, " = ",TRIM(arg2)
       obsinfile = arg2
     case('-obsout')
       CALL GET_COMMAND_ARGUMENT(i+1,arg2)
-      PRINT *, "Argument ", i+1, " = ",TRIM(arg2)
+      WRITE(6,*) "Argument ", i+1, " = ",TRIM(arg2)
       obsoutfile = arg2
     case('-qcyyyymmddhh')
       CALL GET_COMMAND_ARGUMENT(i+1,arg2)
-      PRINT *, "Argument ", i+1, " = ",TRIM(arg2)
-      !read (arg2,*) min_quality_level
+      WRITE(6,*) "Argument ", i+1, " = ",TRIM(arg2)
       Syyyymmddhh = arg2
     case('-maxdt')
       CALL GET_COMMAND_ARGUMENT(i+1,arg2)
-      PRINT *, "Argument ", i+1, " = ",TRIM(arg2)
+      WRITE(6,*) "Argument ", i+1, " = ",TRIM(arg2)
       read (arg2,*) delta_seconds
-    case('-olevel')
+    case('-ovar')
       CALL GET_COMMAND_ARGUMENT(i+1,arg2)
-      PRINT *, "Argument ", i+1, " = ",TRIM(arg2)
-      read (arg2,*) obs_level
+      WRITE(6,*) "Argument ", i+1, " = ",TRIM(arg2)
+      read (arg2,*) ovar
     case default
-      PRINT *, "ERROR: option is not supported: ", arg1
-      PRINT *, "(with value : ", trim(arg2), " )"
+      WRITE(6,*) "ERROR: option is not supported: ", arg1
+      WRITE(6,*) "(with value : ", trim(arg2), " )"
       stop 1
   end select
 enddo

@@ -42,7 +42,7 @@ PROGRAM obsop_en4_sprof
   USE params_obs,                ONLY: DO_REMOVE_65N
   USE vars_obs
   USE common_obs_oceanmodel
-  USE read_en4,                 ONLY: obs_data, read_en4_nc
+  USE read_en4,                 ONLY: argo_data, read_en4_nc
 
   IMPLICIT NONE
 
@@ -50,6 +50,7 @@ PROGRAM obsop_en4_sprof
   CHARACTER(slen) :: guesfile='gues'          !IN (default) i.e. prefix to '.ocean_temp_salt.res.nc'
   CHARACTER(slen) :: obsoutfile='obsout.dat'  !OUT(default)
   
+  TYPE(argo_data),ALLOCATABLE :: obs_data(:)
   REAL(r_size), ALLOCATABLE :: elem(:)
   REAL(r_size), ALLOCATABLE :: rlon(:)
   REAL(r_size), ALLOCATABLE :: rlat(:)

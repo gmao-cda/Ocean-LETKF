@@ -43,7 +43,7 @@ PROGRAM obsop_en4_tprof
   USE vars_obs
   USE common_obs_oceanmodel
   USE gsw_pot_to_insitu,         ONLY: t_from_pt, p_from_z, sa_from_sp, pt_from_t
-  USE read_en4,                 ONLY: obs_data, read_en4_nc
+  USE read_en4,                 ONLY: argo_data, read_en4_nc
   ! For dynamic instantiation and use of namelists:
   USE input_nml_oceanmodel, ONLY: read_input_namelist
 
@@ -53,6 +53,8 @@ PROGRAM obsop_en4_tprof
   CHARACTER(slen) :: obsinfile2='obsin2.nc'     !IN (default)
   CHARACTER(slen) :: guesfile='gues'          !IN (default) i.e. prefix to '.ocean_temp_salt.res.nc'
   CHARACTER(slen) :: obsoutfile='obsout.dat'  !OUT(default)
+
+  TYPE(argo_data),ALLOCATABLE :: obs_data(:)
   
   REAL(r_size), ALLOCATABLE :: elem(:)
   REAL(r_size), ALLOCATABLE :: rlon(:)
