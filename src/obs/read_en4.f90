@@ -23,10 +23,33 @@ MODULE read_en4
   PRIVATE
   
   PUBLIC :: read_en4_nc, argo_data
+  PUBLIC :: ocn_profile
   PRIVATE :: inspect_obs_data
   
-  
-  INTEGER :: nobs
+
+  INTEGER,PARAMETER :: OCN_PROFILE_VALID = 1
+  INTEGER,PARAMETER :: OCN_PROFILE_NOT_VALID = 4
+
+  TYPE ocn_profile
+    INTEGER :: nprof = 0
+    INTEGER :: nlev  = 0
+    REAL(r_size),ALLOCATABLE :: obsVal(:,:) ! nlev * nprof
+    REAL(r_size),ALLOCATABLE :: depth(:,:) ! nlev*nprof
+    INTEGER,     ALLOCATABLE :: obsValid(:,:) ! nlev*nprof: 1-good, -9: bad
+    REAL(r_size),ALLOCATABLE :: simVal(:,:)      ! nlev*nprof
+    INTEGER,     ALLOCATABLE :: simValid(:,:) ! nlev*nprof:
+    REAL(r_size),ALLOCATABLE :: lon(:) ! nprof
+    REAL(r_size),ALLOCATABLE :: lat(:) ! nprof
+    REAL(r_size),ALLOCATABLE :: time(:) ! nprof
+    INTEGER,     ALLOCATABLE :: nlevValid(:) ! nprof
+
+    CONTAINS
+      PROCEDURE,PUBLIC,PASS(this) :: ALLOCATE => ALLOCATE_ocn_profile
+      PROCEDURE,PUBLIC,PASS(this) :: DEALLOCATE => DEALLOCATE_ocn_profile
+      PROCEDURE,PUBLIC,PASS(this) :: write_nc => write_nc_ocn_profile
+      PROCEDURE,PUBLIC,PASS(this) :: read_nc  => read_nc_ocn_profile
+      PROCEDURE,PUBLIC,PASS(this) :: inspect  => inspect_ocn_profile
+  ENDTYPE
  
   TYPE argo_data
     REAL(r_size) :: x_grd(3)  ! longitude, latitude, and z depth (m)
@@ -73,6 +96,244 @@ MODULE read_en4
   
 CONTAINS
 
+SUBROUTINE allocate_ocn_profile(this,nlev,nprof)
+  IMPLICIT NONE
+  CLASS(ocn_profile),INTENT(INOUT) :: this
+  INTEGER,INTENT(IN) :: nlev, nprof
+
+  this % nlev = nlev
+  this % nprof = nprof
+
+  ALLOCATE( this % lon(nprof) )
+  ALLOCATE( this % lat(nprof) )
+
+  ALLOCATE( this % time(nprof) )
+
+  ALLOCATE( this % nlevValid(nprof) )
+  ALLOCATE( this % obsValid(nlev,nprof) )
+  ALLOCATE( this % simValid(nlev,nprof) )
+
+  ALLOCATE( this % depth(nlev,nprof) )
+  ALLOCATE( this % obsVal(nlev,nprof) )
+  ALLOCATE( this % simVal(nlev,nprof) )
+
+  this % nlevValid(:) = 0
+  this % obsValid(:,:)  = OCN_PROFILE_NOT_VALID
+  this % simValid(:,:)  = OCN_PROFILE_NOT_VALID
+
+ENDSUBROUTINE
+
+
+SUBROUTINE deallocate_ocn_profile(this)
+  IMPLICIT NONE
+  CLASS(ocn_profile),INTENT(INOUT) :: this
+
+  this % nlev = 0 
+  this % nprof = 0
+
+  if (ALLOCATED(this%lon)) DEALLOCATE( this%lon)
+  if (ALLOCATED(this%lat)) DEALLOCATE( this%lat)
+  if (ALLOCATED(this%time)) DEALLOCATE( this%time)
+  if (ALLOCATED(this%nlevValid)) DEALLOCATE( this%nlevValid)
+  if (ALLOCATED(this%obsVal)) DEALLOCATE( this%obsVal)
+  if (ALLOCATED(this%obsValid)) DEALLOCATE( this%obsValid)
+  if (ALLOCATED(this%simVal)) DEALLOCATE( this%simVal)
+  if (ALLOCATED(this%simValid)) DEALLOCATE( this%simValid)
+  if (ALLOCATED(this%depth)) DEALLOCATE( this%depth)
+
+ENDSUBROUTINE
+
+SUBROUTINE read_nc_ocn_profile(this,fnin)
+  USE m_ncio,  ONLY: nc_get_fid, nc_close_fid, nc_rdvar1d, nc_rdvar2d, &
+                     nc_rddim
+  IMPLICIT NONE
+  
+  CLASS(ocn_profile),INTENT(INOUT) :: this
+  CHARACTER(*),INTENT(IN) :: fnin
+
+  INTEGER :: nlev, nprof
+  INTEGER :: fid
+  INTEGER,ALLOCATABLE :: i4buf1d(:), i4buf2d(:,:)
+  REAL(8),ALLOCATABLE :: r8buf1d(:), r8buf2d(:,:)
+
+!----------------------------------------------------------
+! open the file & read in dim
+  CALL nc_get_fid(trim(fnin),fid)
+  CALL nc_rddim(fid,"nlev",nlev)
+  CALL nc_rddim(fid,"nprof",nprof)
+  CALL this%deallocate()
+  CALL this%allocate(nprof=nprof,nlev=nlev)
+
+!----------------------------------------------------------
+! read in the vars
+  ALLOCATE(i4buf1d(nprof),r8buf1d(nprof))
+  ALLOCATE(i4buf2d(nlev,nprof),r8buf2d(nlev,nprof))
+  CALL nc_rdvar1d(fid,"lon",this%lon)
+  CALL nc_rdvar1d(fid,"lat",this%lat)
+  CALL nc_rdvar1d(fid,"time",this%time)
+  CALL nc_rdvar1d(fid,"nlevValid",this%nlevValid)
+  CALL nc_rdvar2d(fid,"obsValid",this%obsValid)
+  CALL nc_rdvar2d(fid,"simValid",this%simValid)
+  CALL nc_rdvar2d(fid,"depth",   this%depth)
+  CALL nc_rdvar2d(fid,"obsVal",  this%obsVal)
+  CALL nc_rdvar2d(fid,"simVal",  this%simVal)
+
+!----------------------------------------------------------
+! close the file
+  CALL nc_close_fid(fid)
+
+  DEALLOCATE(i4buf1d,i4buf2d,r8buf1d,r8buf2d)
+
+  CALL this%inspect()
+
+ENDSUBROUTINE
+
+SUBROUTINE inspect_ocn_profile(this)
+  IMPLICIT NONE
+
+  CLASS(ocn_profile),INTENT(IN) :: this
+  INTEGER :: nlev, nprof
+  
+  write(6,*) "inspect ocn_profile:"
+  write(6,*) "nlev, nprof = ", nlev, nprof
+  if (allocated(this%lon)) then
+     write(6,*) "lon: min, max=", minval(this%lon),maxval(this%lon)
+  else
+     write(6,*) "lon: not allocated"
+  endif
+
+  if (allocated(this%lat)) then
+     write(6,*) "lat: min, max=", minval(this%lat),maxval(this%lat)
+  else
+     write(6,*) "lat: not allocated"
+  endif
+
+  if (allocated(this%time)) then
+     write(6,*) "time: min, max=", minval(this%time),maxval(this%time)
+  else
+     write(6,*) "time: not allocated"
+  endif
+
+  if (allocated(this%nlevValid)) then
+     write(6,*) "nlevValid: min, max=", minval(this%nlevValid),maxval(this%nlevValid)
+  else
+     write(6,*) "nlevValid: not allocated"
+  endif
+
+  if (allocated(this%obsValid)) then
+     write(6,*) "obsValid: min, max=", minval(this%obsValid),maxval(this%obsValid)
+  else
+     write(6,*) "obsValid: not allocated"
+  endif
+
+  if (allocated(this%simValid)) then
+     write(6,*) "simValid: min, max=", minval(this%simValid),maxval(this%simValid)
+  else
+     write(6,*) "simValid: not allocated"
+  endif
+
+  if (allocated(this%depth)) then
+     write(6,*) "depth: min, max=", minval(this%depth),maxval(this%depth)
+  else
+     write(6,*) "depth: not allocated"
+  endif
+
+  if (allocated(this%obsVal)) then
+     write(6,*) "obsVal: min, max=", minval(this%obsVal),maxval(this%obsVal)
+  else
+     write(6,*) "obsVal: not allocated"
+  endif
+
+  if (allocated(this%simVal)) then
+     write(6,*) "simVal: min, max=", minval(this%simVal),maxval(this%simVal)
+  else
+     write(6,*) "simVal: not allocated"
+  endif
+
+ENDSUBROUTINE
+
+SUBROUTINE write_nc_ocn_profile(this,fnout)
+  USE m_ncio,    ONLY: nc_get_fid, nc_close_fid, &
+                       nc_wrtvar1d, nc_wrtvar2d
+  USE mod_f90gionc, ONLY: NC_createFile, NC_createDims, NC_createVars, &
+                          NF90_INT, NF90_DOUBLE
+  IMPLICIT NONE
+
+  CLASS(ocn_profile),INTENT(IN) :: this
+  CHARACTER(*),INTENT(IN) :: fnout
+  ! vars for nc
+  INTEGER,PARAMETER :: ndims = 2
+  CHARACTER(80) :: dimname(ndims), dimlev, dimprof
+  LOGICAL       :: dimunlimited(ndims)
+  INTEGER       :: dimlen(ndims)
+
+  INTEGER,PARAMETER :: nvars = 9
+  CHARACTER(80) :: varname(nvars)
+  INTEGER       :: varmaxdim(nvars) = 0
+  CHARACTER(80) :: vardimname(4,nvars)
+  INTEGER       :: vartype(nvars)
+
+  INTEGER :: fid
+  INTEGER :: ivar
+
+  
+  ! predefined
+  dimname = ["nlev ", "nprof"] 
+  dimlev  = dimname(1)
+  dimprof = dimname(2)
+  dimlen  = [ this%nlev, this%nprof ]
+  dimunlimited = [.false., .true.]
+
+  varname = ["lon      ", &  ! (nprof)
+             "lat      ", &  ! (nprof)
+             "time     ", &  ! (nprof)
+             "nlevValid", &  ! (nprof)
+             "obsValid ", &  ! (nlev,nprof)
+             "simValid ", &  ! (nlev,nprof)
+             "depth    ", &  ! (nlev,nprof)
+             "obsVal   ", &  ! (nlev,nprof)
+             "simVal   " ]   ! (nlev,nprof)
+  vartype = [NF90_DOUBLE, & ! lon
+             NF90_DOUBLE, & ! lat
+             NF90_DOUBLE, & ! time
+             NF90_INT, & ! nlevValid
+             NF90_INT, & ! obsValid
+             NF90_INT, & ! simValid
+             NF90_DOUBLE, & ! depth
+             NF90_DOUBLE, & ! obsVal
+             NF90_DOUBLE ]  ! simVal
+  varmaxdim(1:4) = 1
+  varmaxdim(5:nvars) = 2
+  do ivar = 1, 4
+    vardimname(1:1,ivar) = [ dimprof ]
+  enddo
+  do ivar = 5, nvars
+    vardimname(1:2,ivar) = [ dimlev,dimprof ]
+  enddo
+
+  ! nc create files
+  CALL NC_CreateFile(trim(fnout))
+  CALL NC_CreateDims(trim(fnout),ndims,dimname,dimunlimited,dimlen)
+  call NC_CreateVars(trim(fnout),nvars,varname, vartype, varmaxdim, vardimname)
+
+  ! write out profile
+  CALL nc_get_fid(trim(fnout),fid,writemode=.true.)
+  CALL nc_wrtvar1d(fid,varname(1),real(this%lon, 8)) ! lon
+  CALL nc_wrtvar1d(fid,varname(2),real(this%lat, 8)) ! lat
+  CALL nc_wrtvar1d(fid,varname(3),real(this%time,8)) ! time
+  CALL nc_wrtvar1d(fid,varname(4),this%nlevValid) ! nlevValid
+  CALL nc_wrtvar2d(fid,varname(5),this%obsValid) ! obsValid
+  CALL nc_wrtvar2d(fid,varname(6),this%simValid) ! simValid
+  CALL nc_wrtvar2d(fid,varname(7),real(this%depth, 8)) ! depth
+  CALL nc_wrtvar2d(fid,varname(8),real(this%obsVal,8)) ! obsVal
+  CALL nc_wrtvar2d(fid,varname(9),real(this%simVal,8)) ! simVal
+  CALL nc_close_fid(fid)
+
+
+END SUBROUTINE
+
+
+
 SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
 !===============================================================================
 ! Read the argo profile data
@@ -96,21 +357,21 @@ SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
   INTEGER :: nprof_valid
   CHARACTER(len=14),dimension(1) :: srefdt = "19500101000000"
   CHARACTER(len=14),dimension(1),parameter :: srefdt_predefined = "19500101000000"
-  CHARACTER(len=:), allocatable :: qc_pos(:)     ! slen=nprof, *1
-  CHARACTER(len=:), allocatable :: qc_prof(:) ! slen=nprof, *1
-  CHARACTER(len=:), allocatable :: qc_var(:)     ! slen=nlv, *nprof
+  CHARACTER(len=:), ALLOCATABLE :: qc_pos(:)     ! slen=nprof, *1
+  CHARACTER(len=:), ALLOCATABLE :: qc_prof(:) ! slen=nprof, *1
+  CHARACTER(len=:), ALLOCATABLE :: qc_var(:)     ! slen=nlv, *nprof
   CHARACTER(64) :: varname, varqcname, profqcname
-  integer,parameter :: days_between_19500101_19780101 = 10227
+  INTEGER,parameter :: days_between_19500101_19780101 = 10227
   type(t_datetime) :: datetime_19780101, qc_datetime, min_datetime, max_datetime
-  type(t_datetime),allocatable :: obs_datetime(:) ! nprof
-  integer :: min_total_seconds(1), max_total_seconds(1)
-  real(r_dble),allocatable :: rdbuf1d(:)   ! nprof
-  real(r_sngl),allocatable :: depth2d(:,:) ! (nlv,nprof)
-  real(r_sngl),allocatable :: var2d(:,:) ! (nlv,nprof)
-  real(r_dble),allocatable :: lat(:) ! nprof
-  real(r_dble),allocatable :: lon(:) ! nprof
-  logical,allocatable :: valid2d(:,:) ! overall qc (nlv,nprof)
-  logical,allocatable :: valid(:)     ! overall profile qc (nprof)
+  type(t_datetime),ALLOCATABLE :: obs_datetime(:) ! nprof
+  INTEGER :: min_total_seconds(1), max_total_seconds(1)
+  real(r_dble),ALLOCATABLE :: rdbuf1d(:)   ! nprof
+  real(r_sngl),ALLOCATABLE :: depth2d(:,:) ! (nlv,nprof)
+  real(r_sngl),ALLOCATABLE :: var2d(:,:) ! (nlv,nprof)
+  real(r_dble),ALLOCATABLE :: lat(:) ! nprof
+  real(r_dble),ALLOCATABLE :: lon(:) ! nprof
+  logical,ALLOCATABLE :: valid2d(:,:) ! overall qc (nlv,nprof)
+  logical,ALLOCATABLE :: valid(:)     ! overall profile qc (nprof)
   real(r_dble) :: fillValue, valid_min, valid_max
 
   REAL(r_size) :: se0, seF
@@ -132,13 +393,13 @@ SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
   CALL nc_rddim(fid, "N_LEVELS", nlv)
   write(6,*) "[msg] "//trim(myname)//"::fn, nprof, nlevels=",trim(infile),nprof,nlv
 
-  allocate(valid(nprof),valid2d(nlv,nprof))
-  allocate(lon(nprof),lat(nprof))
-  allocate(depth2d(nlv,nprof))
-  allocate(var2d(nlv,nprof))
-  allocate(character(len=nprof)::qc_pos(1))
-  allocate(character(len=nprof)::qc_prof(1))
-  allocate(character(len=nlv)::qc_var(nprof))
+  ALLOCATE(valid(nprof),valid2d(nlv,nprof))
+  ALLOCATE(lon(nprof),lat(nprof))
+  ALLOCATE(depth2d(nlv,nprof))
+  ALLOCATE(var2d(nlv,nprof))
+  ALLOCATE(character(len=nprof)::qc_pos(1))
+  ALLOCATE(character(len=nprof)::qc_prof(1))
+  ALLOCATE(character(len=nlv)::qc_var(nprof))
   valid(:) = .true.
   valid2d(:,:) = .true.
 
@@ -187,8 +448,8 @@ SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
   end if
   datetime_19780101 = datetime(1978,1,1,0,0,0) ! this is the earliest date supported by w3movdat_full.f
 
-  allocate(rdbuf1d(nprof))
-  allocate(obs_datetime(nprof))
+  ALLOCATE(rdbuf1d(nprof))
+  ALLOCATE(obs_datetime(nprof))
   CALL nc_rdvar1d(fid,"JULD",rdbuf1d)
   do i = 1, nprof
      ! this is because the w3movdate_full.f does not support date before 19780101
@@ -328,7 +589,7 @@ SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
   enddo
   write(6,*) "[msg] "//trim(myname)//":: nprof_valid, nobs=", nprof_valid, nobs
   
-  allocate(obs_data(nobs))
+  ALLOCATE(obs_data(nobs))
   n = 0
   do i=1,nprof
     do k=1,nlv
@@ -352,9 +613,9 @@ SUBROUTINE read_en4_nc(infile,typ,obs_data,nobs,Syyyymmddhh,delta_seconds)
 
   call inspect_obs_data(obs_data,trim(myname))
   
-  ! Explicitly deallocate temporary arrays
-  deallocate(stde,valid,valid2d,lon,lat,depth2d,var2d,obs_datetime,rdbuf1d)
-  deallocate(qc_pos,qc_prof, qc_var)
+  ! Explicitly DEALLOCATE temporary arrays
+  DEALLOCATE(stde,valid,valid2d,lon,lat,depth2d,var2d,obs_datetime,rdbuf1d)
+  DEALLOCATE(qc_pos,qc_prof, qc_var)
   
 END SUBROUTINE read_en4_nc
 

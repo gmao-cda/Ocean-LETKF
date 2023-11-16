@@ -27,6 +27,7 @@ set (SRCS
   common_all/netlib.f
   common_all/netlibblas.f
 # from ../support/io/
+  ../support/io/mod_f90gionc.f90
   ../support/io/m_ncio.f90
   ../support/io/nc_rdatt.f90.inc
   ../support/io/nc_rdvar.f90.inc
@@ -113,6 +114,7 @@ set(decoders
   sst_viirs
   sss_smap
   en4
+  en4_nc
   )
 foreach(decoder ${decoders})
   add_executable(OCN.decoder.${decoder}.x obs/decoder_${decoder}.f90)
