@@ -49,6 +49,7 @@ PRIVATE
                               diag_DO_salt, & !
                               diag_DO_u, & !
                               diag_DO_v, & !
+                              diag_DO_h, & !
                               diag_DO_ssh, & !
                               diag_DO_sst, & !
                               diag_DO_sss, & !

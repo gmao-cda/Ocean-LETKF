@@ -259,13 +259,14 @@ SUBROUTINE read_diag(infile,v3d,v2d,prec_in)
   USE vars_model,   ONLY: SSHclm_m
   USE params_model, ONLY: nlon, nlat, nlev
   USE params_model, ONLY: nv3d, nv2d
-  USE params_model, ONLY: iv3d_u, iv3d_v, iv3d_t, iv3d_s
+  USE params_model, ONLY: iv3d_u, iv3d_v, iv3d_t, iv3d_s, iv3d_h
   USE params_model, ONLY: iv2d_sst, iv2d_sss, iv2d_ssh
   USE params_model, ONLY: diag_temp_name, diag_salt_name
   USE params_model, ONLY: diag_u_name, diag_v_name, diag_h_name
   USE params_model, ONLY: diag_ssh_name, diag_sst_name, diag_sss_name
   USE params_model, ONLY: diag_height_name
-  USE params_model, ONLY: diag_DO_temp, diag_DO_salt, diag_DO_u, diag_DO_v, diag_DO_ssh, diag_DO_sst, diag_DO_sss
+  USE params_model, ONLY: diag_DO_temp, diag_DO_salt, diag_DO_u, diag_DO_v, diag_DO_h, &
+                          diag_DO_ssh, diag_DO_sst, diag_DO_sss
   
   CHARACTER(*), INTENT(IN) :: infile
   REAL(r_size),INTENT(OUT) :: v3d(nlon,nlat,nlev,nv3d)
@@ -396,7 +397,7 @@ SUBROUTINE read_diag(infile,v3d,v2d,prec_in)
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! Open the T/S netcdf restart file
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-  if (diag_DO_temp .or. diag_DO_salt .or. diag_DO_u .or. diag_DO_v .or. &
+  if (diag_DO_temp .or. diag_DO_salt .or. diag_DO_u .or. diag_DO_v .or. diag_DO_h .or. &
       diag_DO_ssh  .or. diag_DO_sst  .or. diag_DO_sss ) then
     WRITE(6,*) "read_diag:: opening file: ",trim(infile)
     call check( NF90_OPEN(trim(infile),NF90_NOWRITE,ncid) )
@@ -558,6 +559,45 @@ SUBROUTINE read_diag(infile,v3d,v2d,prec_in)
     endif
     ! !STEVE: end
   endif
+
+  !!! h
+  if (diag_DO_h) then 
+    varname=diag_h_name
+    ivid=iv3d_h
+
+    call check( NF90_INQ_VARID(ncid,trim(varname),varid) )
+    if (dodebug) WRITE(6,*) "read_diag:: just got data for variable :: ",trim(varname)
+    select case (prec)
+      case(1)
+        buf4=0.0
+        call check( NF90_GET_VAR(ncid,varid,buf4) )
+        v3d(:,:,:,ivid) = buf4 !REAL(buf4,r_size)
+      case(2)
+        buf8=0.0d0
+        call check( NF90_GET_VAR(ncid,varid,buf8) )
+        v3d(:,:,:,ivid) = buf8
+    end select
+    if (dodebug) WRITE(6,*) "read_diag:: finished processing data for variable :: ",trim(varname)
+  
+    ! !STEVE: debug
+    if (dodebug) then
+      call check( NF90_GET_ATT(ncid,varid,"missing_value",missing_value) )
+      WRITE(6,*) "POST-H"
+      WRITE(6,*) "read_diag:: infile = ", trim(infile)
+      do k=1,nlev
+         where (abs(v3d(:,:,k,ivid)-missing_value)<epsilon(v3d))
+            valid2d = .false.
+         elsewhere
+            valid2d = .true.
+         end where
+        WRITE(6,*) "min, max val for level v3d(:,:,", k, ",iv3d_h) = ",MINVAL(v3d(:,:,k,iv3d_h),mask=valid2d), &
+                                                                       MAXVAL(v3d(:,:,k,iv3d_h),mask=valid2d)
+      enddo
+
+    endif
+    ! !STEVE: end
+  endif
+
 
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   ! 2D-Variables

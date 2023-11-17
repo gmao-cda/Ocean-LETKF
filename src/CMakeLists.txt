@@ -97,8 +97,6 @@ set(operators
   sss
   tprof
   sprof
-  en4_tprof
-  en4_sprof
   icefrac
   )
 foreach(operator ${operators})
@@ -108,6 +106,7 @@ foreach(operator ${operators})
   target_compile_definitions(OCN.obsOp_${MODEL}.${operator}.x PRIVATE DYNAMIC)
   install(TARGETS OCN.obsOp_${MODEL}.${operator}.x)
 endforeach()
+
 
 # different observation decoders
 set(decoders
@@ -130,6 +129,14 @@ target_link_libraries(OCN.superob.x PRIVATE OCN.letkf NetCDF::NetCDF_Fortran HDF
 set_target_properties (OCN.superob.x  PROPERTIES Fortran_PREPROCESS ON) 
 target_compile_definitions(OCN.superob.x PRIVATE DYNAMIC)
 install(TARGETS OCN.superob.x)
+
+# verification
+set(xname OCN.verify_en4.x)
+add_executable(${xname} obs/verify_en4_tprof.f90)
+target_link_libraries(${xname} PRIVATE OCN.letkf NetCDF::NetCDF_Fortran HDF5::HDF5)
+set_target_properties (${xname}  PROPERTIES Fortran_PREPROCESS ON) 
+target_compile_definitions(${xname} PRIVATE DYNAMIC)
+install(TARGETS ${xname})
 
 
 

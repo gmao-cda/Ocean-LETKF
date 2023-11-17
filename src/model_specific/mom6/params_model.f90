@@ -117,6 +117,7 @@ PUBLIC
   LOGICAL :: diag_DO_salt = .true.
   LOGICAL :: diag_DO_u    = .false.
   LOGICAL :: diag_DO_v    = .false.
+  LOGICAL :: diag_DO_h    = .false.
   LOGICAL :: diag_DO_ssh  = .true.
   LOGICAL :: diag_DO_sst  = .true.
   LOGICAL :: diag_DO_sss  = .true.
