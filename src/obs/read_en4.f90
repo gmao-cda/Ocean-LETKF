@@ -22,9 +22,9 @@ MODULE read_en4
   
   PRIVATE
   
-  PUBLIC :: read_en4_nc, argo_data
+  PUBLIC :: read_en4_nc, argo_data, inspect_obs_data
   PUBLIC :: ocn_profile
-  PRIVATE :: inspect_obs_data
+  PUBLIC :: select_prof_en4_nc
   
 
   INTEGER,PARAMETER :: OCN_PROFILE_VALID = 1
@@ -192,10 +192,9 @@ SUBROUTINE inspect_ocn_profile(this)
   IMPLICIT NONE
 
   CLASS(ocn_profile),INTENT(IN) :: this
-  INTEGER :: nlev, nprof
   
   write(6,*) "inspect ocn_profile:"
-  write(6,*) "nlev, nprof = ", nlev, nprof
+  write(6,*) "nlev, nprof = ", this%nlev, this%nprof
   if (allocated(this%lon)) then
      write(6,*) "lon: min, max=", minval(this%lon),maxval(this%lon)
   else
@@ -233,19 +232,21 @@ SUBROUTINE inspect_ocn_profile(this)
   endif
 
   if (allocated(this%depth)) then
-     write(6,*) "depth: min, max=", minval(this%depth),maxval(this%depth)
+     write(6,*) "depth: min, max=", minval(this%depth,mask=this%obsValid==OCN_PROFILE_VALID), &
+               maxval(this%depth,mask=this%obsValid==OCN_PROFILE_VALID)
   else
      write(6,*) "depth: not allocated"
   endif
 
   if (allocated(this%obsVal)) then
-     write(6,*) "obsVal: min, max=", minval(this%obsVal),maxval(this%obsVal)
+     write(6,*) "obsVal: min, max=", minval(this%obsVal,mask=this%obsValid==OCN_PROFILE_VALID), &
+                maxval(this%obsVal,mask=this%obsValid==OCN_PROFILE_VALID)
   else
      write(6,*) "obsVal: not allocated"
   endif
 
   if (allocated(this%simVal)) then
-     write(6,*) "simVal: min, max=", minval(this%simVal),maxval(this%simVal)
+     write(6,*) "simVal: min, max=", minval(this%simVal,mask=this%simValid==OCN_PROFILE_VALID),maxval(this%simVal,mask=this%simValid==OCN_PROFILE_VALID)
   else
      write(6,*) "simVal: not allocated"
   endif
@@ -331,6 +332,280 @@ SUBROUTINE write_nc_ocn_profile(this,fnout)
 
 
 END SUBROUTINE
+
+SUBROUTINE select_prof_en4_nc(infile,typ,prof,Syyyymmddhh,delta_seconds)
+  USE m_ncio,    ONLY: nc_get_fid, nc_close_fid, nc_rddim, nc_rdvar2d, nc_rdvar1d, &
+                       nc_rdatt, nc_fndvar
+  USE m_datetime, ONLY: t_datetime, t_timedelta, datetime, timedelta
+  IMPLICIT NONE
+  
+  CHARACTER(*), INTENT(IN) :: infile
+  INTEGER, INTENT(IN) :: typ
+  CLASS(ocn_profile),INTENT(INOUT) :: prof
+  CHARACTER(10),INTENT(IN), OPTIONAL :: Syyyymmddhh
+                                        !1234567890
+  INTEGER,      INTENT(IN), OPTIONAL :: delta_seconds  ! qc'ed if abs(obstime-Syyyymmddhh)>delta_seconds
+
+! ncvars
+  INTEGER :: fid
+  INTEGER :: nprof, nlv
+  INTEGER :: nprof_valid
+  CHARACTER(len=14),dimension(1) :: srefdt = "19500101000000"
+  CHARACTER(len=14),dimension(1),parameter :: srefdt_predefined = "19500101000000"
+  CHARACTER(len=:), ALLOCATABLE :: qc_pos(:)     ! slen=nprof, *1
+  CHARACTER(len=:), ALLOCATABLE :: qc_prof(:) ! slen=nprof, *1
+  CHARACTER(len=:), ALLOCATABLE :: qc_var(:)     ! slen=nlv, *nprof
+  CHARACTER(64) :: varname, varqcname, profqcname
+  INTEGER,parameter :: days_between_19500101_19780101 = 10227
+  type(t_datetime) :: datetime_19780101, qc_datetime, min_datetime, max_datetime
+  type(t_datetime),ALLOCATABLE :: obs_datetime(:) ! nprof
+  INTEGER :: min_total_seconds(1), max_total_seconds(1)
+  real(r_dble),ALLOCATABLE :: rdbuf1d(:)   ! nprof
+  real(r_sngl),ALLOCATABLE :: depth2d(:,:) ! (nlv,nprof)
+  real(r_sngl),ALLOCATABLE :: var2d(:,:) ! (nlv,nprof)
+  real(r_dble),ALLOCATABLE :: lat(:) ! nprof
+  real(r_dble),ALLOCATABLE :: lon(:) ! nprof
+  logical,ALLOCATABLE :: valid2d(:,:) ! overall qc (nlv,nprof)
+  logical,ALLOCATABLE :: valid(:)     ! overall profile qc (nprof)
+  real(r_dble) :: fillValue, valid_min, valid_max
+
+  REAL(r_size) :: se0, seF
+
+  INTEGER :: i,j,k,n
+  REAL(r_size), ALLOCATABLE, DIMENSION(:,:) :: stde
+  LOGICAL :: dodebug=.false.
+  REAL(r_sngl) :: max_value=999
+  REAL(r_sngl) :: max_depth=99999
+  CHARACTER(*),parameter :: myname = "select_prof_en4_nc"
+
+ 
+  
+  !-------------------------------------------------------------------------------
+  ! Open netcdf file & read dimension
+  !-------------------------------------------------------------------------------
+  CALL nc_get_fid(trim(infile),fid)
+  CALL nc_rddim(fid, "N_PROF", nprof)
+  CALL nc_rddim(fid, "N_LEVELS", nlv)
+  write(6,*) "[msg] "//trim(myname)//"::fn, nprof, nlevels=",trim(infile),nprof,nlv
+
+  ALLOCATE(valid(nprof),valid2d(nlv,nprof))
+  ALLOCATE(lon(nprof),lat(nprof))
+  ALLOCATE(depth2d(nlv,nprof))
+  ALLOCATE(var2d(nlv,nprof))
+  ALLOCATE(character(len=nprof)::qc_pos(1))
+  ALLOCATE(character(len=nprof)::qc_prof(1))
+  ALLOCATE(character(len=nlv)::qc_var(nprof))
+  valid(:) = .true.
+  valid2d(:,:) = .true.
+
+  !-------------------------------------------------------------------------------
+  ! read vars
+  !-------------------------------------------------------------------------------
+  ! spatial info
+  CALL nc_rdvar1d(fid,"LONGITUDE", lon)
+  CALL nc_rdatt(fid,"LONGITUDE", "valid_min",valid_min)
+  CALL nc_rdatt(fid,"LONGITUDE", "valid_max",valid_max)
+  CALL nc_rdatt(fid,"LONGITUDE", "_fillvalue",fillValue)
+  print*, "valid_min, valid_max, fillValue=",valid_min, valid_max, fillValue
+  where (lon<valid_min .or. lon>valid_max .or. nint(lon)==nint(fillValue))
+       valid = .false.
+  endwhere
+
+  CALL nc_rdvar1d(fid,"LATITUDE",  lat)
+  CALL nc_rdatt(fid,"LATITUDE", "valid_min",valid_min)
+  CALL nc_rdatt(fid,"LATITUDE", "valid_max",valid_max)
+  CALL nc_rdatt(fid,"LATITUDE", "_fillvalue",fillValue)
+  print*, "valid_min, valid_max, fillValue=",valid_min, valid_max, fillValue
+  where (lat<valid_min .or. lat>valid_max .or. nint(lat)==nint(fillValue))
+       valid = .false.
+  endwhere
+
+  CALL nc_rdvar1d(fid,"POSITION_QC",nprof,qc_pos)
+  do i = 1, nprof
+     if (qc_pos(1)(i:i) /= '1') valid(i) = .false.
+  enddo
+  write(6,*) "lon: min, max=", minval(lon,mask=valid),maxval(lon,mask=valid)
+  write(6,*) "lat: min, max=", minval(lat,mask=valid),maxval(lat,mask=valid)
+
+  nprof_valid = 0
+  do i = 1, nprof
+     nprof_valid = nprof_valid +1
+  enddo
+  print*, "[debug] nprof_valid =",nprof_valid
+  
+  ! time info
+  CALL nc_rdvar1d(fid,"REFERENCE_DATE_TIME", 14,srefdt)
+  write(6,*) "reference date in the file = ", trim(srefdt(1))
+  if (srefdt(1) /= srefdt_predefined(1)) then
+     write(6,*) "[err] "//trim(myname)//":: reference time in the file not the same as predefined value (", &
+                trim(srefdt_predefined(1)), ")"
+     stop (2)
+  end if
+  datetime_19780101 = datetime(1978,1,1,0,0,0) ! this is the earliest date supported by w3movdat_full.f
+
+  ALLOCATE(rdbuf1d(nprof))
+  ALLOCATE(obs_datetime(nprof))
+  CALL nc_rdvar1d(fid,"JULD",rdbuf1d)
+  do i = 1, nprof
+     ! this is because the w3movdate_full.f does not support date before 19780101
+     obs_datetime(i) = datetime_19780101 + timedelta(seconds=nint((rdbuf1d(i)-days_between_19500101_19780101)*24*3600))
+  enddo
+  ! print out min & max obs time from the file
+  do i = 1, nprof
+     rdbuf1d(i) = obs_datetime(i)%total_seconds_since19780101()
+  enddo
+  min_total_seconds = minval(rdbuf1d,mask=valid)
+  max_total_seconds = maxval(rdbuf1d,mask=valid)
+  min_datetime = datetime_19780101 + timedelta(seconds=min_total_seconds(1))
+  max_datetime = datetime_19780101 + timedelta(seconds=max_total_seconds(1))
+  write(6,*) "obs_start_time, obs_end_time=", min_datetime%string(), max_datetime%string()
+
+  ! time filtering
+  if (present(Syyyymmddhh) .and. present(delta_seconds)) then
+     read(Syyyymmddhh,"(I4,I2,I2,I2)") qc_datetime%year, qc_datetime%month, &
+                                       qc_datetime%day,  qc_datetime%hour
+     qc_datetime%minute = 0; qc_datetime%second = 0
+     write(6,*) "qc_datetime, delta_seconds=", qc_datetime%string(), delta_seconds
+     nprof_valid = 0
+     do i = 1, nprof
+        rdbuf1d(i) = obs_datetime(i)%total_seconds_since19780101()
+        if (abs(qc_datetime%total_seconds_since19780101() - &
+                obs_datetime(i)%total_seconds_since19780101()) > delta_seconds) then
+           valid(i) = .false.  ! (nlv,nprof)
+        end if
+        if (valid(i)) nprof_valid = nprof_valid + 1
+     enddo
+     min_total_seconds = minval(rdbuf1d,mask=valid)
+     max_total_seconds = maxval(rdbuf1d,mask=valid)
+     min_datetime = datetime_19780101 + timedelta(seconds=min_total_seconds(1))
+     max_datetime = datetime_19780101 + timedelta(seconds=max_total_seconds(1))
+     write(6,*) "min_time, max_time=", min_datetime%string(), max_datetime%string()
+     write(6,*) "nprof_valid=",nprof_valid
+  endif
+
+  ! read measured quantity
+  if (typ == id_t_obs) then
+     ! read in potential temperature and qc flags for profiles & all levels
+     varname       = "POTM_CORRECTED"
+     varqcname     = "POTM_CORRECTED_QC"
+     profqcname    = "PROFILE_POTM_QC"
+  elseif (typ == id_s_obs) then
+     varname       = "PSAL_CORRECTED"
+     varqcname     = "PSAL_CORRECTED_QC"
+     profqcname    = "PROFILE_PSAL_QC"
+  else
+     write(6,*) "[err] "//trim(myname)//":: unrecognized typ=",typ, ", only support ",id_t_obs, "or", id_s_obs
+     stop (8)
+  endif
+  write(6,*) "varname, varqcname, profqcname=",trim(varname),trim(varqcname),trim(profqcname)
+  CALL nc_rdvar1d(fid,trim(profqcname),nprof,qc_prof)
+  nprof_valid = 0
+  do i = 1, nprof
+     if (qc_prof(1)(i:i) /= '1') valid(i) = .false.
+     if (valid(i)) nprof_valid = nprof_valid + 1
+  enddo
+  write(6,*) "nprof_valid = ", nprof_valid
+
+  ! transfer profile QC to all levels
+  valid2d(:,:) = .true.
+  do i = 1, nprof
+     if (.not.valid(i)) valid2d(:,i) = .false.
+  enddo
+
+  ! read depth
+  CALL nc_rdvar2d(fid,"DEPH_CORRECTED",depth2d)
+  CALL nc_rdatt(  fid,"DEPH_CORRECTED","valid_min",valid_min)
+  CALL nc_rdatt(  fid,"DEPH_CORRECTED","valid_max",valid_max)
+  CALL nc_rdatt(  fid,"DEPH_CORRECTED","_fillvalue",fillValue)
+  write(6,*) "DEPH_CORRECTED: valid_min, valid_max, _fillvalue=", valid_min, valid_max, fillValue
+  where (depth2d<valid_min .or. depth2d>valid_max .or. nint(depth2d)==nint(fillValue))
+    valid2d = .false.
+  endwhere
+  if (dodebug) then
+     write(6,*) "depth(1) = ", depth2d(:,1)
+     write(6,*) "depth(2) = ", depth2d(:,2)
+  endif
+
+  ! read profile vars
+  CALL nc_rdvar2d(fid,trim(varname),var2d)
+  CALL nc_rdatt(  fid,trim(varname),"valid_min",valid_min)
+  CALL nc_rdatt(  fid,trim(varname),"valid_max",valid_max)
+  CALL nc_rdatt(  fid,trim(varname),"_fillvalue",fillValue)
+  write(6,*) "var: valid_min, valid_max, _fillvalue=", valid_min, valid_max, fillValue
+  where (var2d<valid_min .or. var2d>valid_max .or. nint(var2d)==nint(fillValue))
+    valid2d = .false.
+  endwhere
+  write(6,*) "var: min, max=", minval(var2d,mask=valid2d), maxval(var2d,mask=valid2d)
+  !print*, "var(2)=", var2d(:,2)
+
+  ! read profile var qc
+  CALL nc_rdvar1d(fid,trim(varqcname),nlv,qc_var)
+  do i = 1, nprof
+     do k = 1, nlv
+        if (qc_var(i)(k:k) /= "1") valid2d(k,i) = .false.
+     enddo
+  enddo
+  write(6,*) "var: min, max=", minval(var2d,mask=valid2d), maxval(var2d,mask=valid2d)
+
+
+  !-------------------------------------------------------------------------------
+  ! Close the netcdf file
+  !-------------------------------------------------------------------------------
+  CALL nc_close_fid(fid)
+
+
+  !-------------------------------------------------------------------------------
+  ! pack valid profile into ocn_profile structure
+  !-------------------------------------------------------------------------------
+  nprof_valid = 0
+  do i = 1, nprof
+     if (valid(i)) nprof_valid = nprof_valid + 1
+  enddo
+  write(6,*) "select nprof = ", nprof_valid
+  call prof%allocate(nprof = nprof_valid, nlev = nlv)
+ 
+  j = 0
+  do i = 1, nprof
+     if (.not.valid(i)) cycle
+     j = j + 1  ! prof index in output
+     prof % lon(j)       = lon(i)
+     prof % lat(j)       = lat(i)
+     prof % time(j)      = obs_datetime(i)%total_seconds_since19780101()/3600.d0
+     prof % nlevValid(j) = 0
+     n = 0
+     do k = 1, nlv
+        if (.not.valid2d(k,i)) cycle
+        n  = n + 1
+        prof % depth(n,j)    = depth2d(k,i)
+        prof % obsVal(n,j)   = var2d(k,i)
+        prof % obsValid(n,j) = OCN_PROFILE_VALID
+     enddo
+     prof % nlevValid(j) = n
+     write(*,*) "finish writing prof: idx, nlev=", j, prof % nlevValid(j)
+  enddo
+  if (j/=nprof_valid) then
+     write(*,*) "[err] "//trim(myname)//": error in prof indexing"
+     stop (11)
+  else
+     ! check if depth for each profile monotonically increases
+     do j = 1, prof % nprof
+        if (prof%nlevValid(j) > 1) then
+            do n = 2, prof % nlevValid(j)
+               if (prof % depth(n,j) < prof % depth(n-1,j)) then
+                  write(*,*) "[err] "//trim(myname)//": profile depth does not increase monotonically"
+                  write(*,*) "prof: idx, depth(:)=", j, prof%depth(1:prof%nlevValid(j),j)
+                  stop (12)
+               endif
+            enddo
+        endif
+     enddo
+  endif
+
+
+  call prof%inspect()
+
+ENDSUBROUTINE
+ 
 
 
 
