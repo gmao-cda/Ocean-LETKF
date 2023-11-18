@@ -17,7 +17,7 @@ MODULE common_obs_oceanmodel
   IMPLICIT NONE
 
   PUBLIC Trans_XtoY, phys2ijk, read_obs, get_nobs, write_obs, read_obs2, write_obs2, &
-         itpl_2d, itpl_3d, monit_dep, write_obs3, read_obs3, phys2ij_nearest, &
+         itpl_2d, itpl_3d, monit_dep, write_obs3, read_obs3, phys2ij_nearest, phys2ij, &
          create_empty_obsfile
   PUBLIC center_obs_coords
 
@@ -298,6 +298,155 @@ SUBROUTINE phys2ijk(elem,rlon,rlat,rlev,ri,rj,rk)     !(OCEAN)
   
 END SUBROUTINE phys2ijk
 
+
+SUBROUTINE phys2ij(rlon,rlat,ri,rj)     !(OCEAN)
+  USE params_model, ONLY: nlon, nlat, nlev
+  USE vars_model,   ONLY: lon2d, lat2d, lev2d, lon, lat, lev
+  USE vars_model,   ONLY: lon0, lonf, lat0, latf, wrapgap
+  REAL(r_size),INTENT(IN) :: rlon ! observation longitude
+  REAL(r_size),INTENT(IN) :: rlat ! observation latitude
+  REAL(r_size),INTENT(OUT) :: ri  ! non-integer grid coordinate for lon dimension
+  REAL(r_size),INTENT(OUT) :: rj  ! non-integer grid coordinate for lat dimension
+  REAL(r_size) :: aj,ai, rrlon, glon,glat,xlon,xlat
+  INTEGER :: i,j,n, ni,nj, ii,jj
+
+  LOGICAL, PARAMETER :: dodebug = .false.
+
+  !-----------------------------------------------------------------------------
+  ! Initialize the KD-tree for the model-grid
+  !-----------------------------------------------------------------------------
+  !STEVE: NOTE: this is replicated for each process
+  if (initialized == 0) then
+    ! Allocating this was needed for some machines, possibly due to the cache size
+    ! of the machine and how the compiler handles nested function calls in memory.
+    ALLOCATE(lon2ij(nlon*nlat),lat2ij(nlon*nlat))
+    lon2ij = RESHAPE(lon2d(:,:),(/nlon*nlat/))
+    lat2ij = RESHAPE(lat2d(:,:),(/nlon*nlat/))
+
+    WRITE(6,*) "Initializing the obs_local()"
+    initialized = 1
+    call kd_init( kdtree_root, lon2ij, lat2ij )
+    WRITE(6,*) "Done constructing KD search tree."
+    WRITE(6,*) "nlon*nlat = ", nlon*nlat
+    ALLOCATE(dist(k_sought))
+    ALLOCATE( idx(k_sought))
+    prev_lon = -1e10
+    prev_lat = -1e10
+  endif
+
+  !-----------------------------------------------------------------------------
+  ! query the KD-tree
+  !-----------------------------------------------------------------------------
+  if (rlon .ne. prev_lon .or. rlat .ne. prev_lat) then
+    CALL kd_search_nnearest(kdtree_root,  (/rlon, rlat/), k_sought, idx, dist, k_found, .false.)
+    prev_lon = rlon
+    prev_lat = rlat
+    if (dodebug) then
+      WRITE(6,*) "common_obs_mom6.f90::phys2ijk ---------------------------- "
+      WRITE(6,*) "base observation point (lon/lat) :: ", rlon, rlat
+      WRITE(6,*) "k_sought = ", k_sought
+      WRITE(6,*) "k_found  = ", k_found
+      WRITE(6,*) "Grid points found by kd_search_nnearest = "
+      WRITE(6,*) "idx,ni,nj,lon,lat,dist"
+      do n=1,k_found
+        ni = MODULO(idx(n)-1,nlon)+1
+        nj = idx(n)/nlon+1 ! Integer division
+        WRITE(6,*) idx(n), ni,nj, lon2d(ni,nj), lat2d(ni,nj), dist(n)
+      enddo
+    endif
+  endif
+
+  !-----------------------------------------------------------------------------
+  ! rlon -> ri, rlat -> rj
+  !-----------------------------------------------------------------------------
+
+  ! Find the appropriate grid box containing this observation
+
+  ! First, find the index of the nearest grid point
+  ni = MODULO(idx(1)-1,nlon)+1
+  nj = FLOOR(REAL(idx(1))/REAL(nlon))+1 ! Integer division
+  glon = lon2d(ni,nj)
+  glat = lat2d(ni,nj)
+
+  ! For debugging:
+  if (dodebug) then
+    if (ALLOCATED(lon2ij)) xlon = lon2ij(idx(1))
+    if (ALLOCATED(lat2ij)) xlat = lat2ij(idx(1))
+  endif
+
+  !STEVE: initialize to something that will throw errors if it's not changed within
+  ri = -1
+  rj = -1
+
+  ! Second, check to see whether the observation is to the left/right, up/down from this point
+
+  !-----------------------------------------------------------------------------
+  ! Get longitude scaling
+  !-----------------------------------------------------------------------------
+  if (glon == rlon) then
+    ai = 0.0
+  elseif (glon < rlon) then
+    ai = (rlon - lon2d(ni,nj)) / (lon2d(ni+1,nj) - lon2d(ni,nj))
+  elseif (rlon < glon) then
+    ai = (rlon - lon2d(ni,nj)) / (lon2d(ni,nj) - lon2d(ni-1,nj))
+  endif
+  ri = REAL(ni,r_size) + ai
+
+  !-----------------------------------------------------------------------------
+  ! Get latitude scaling
+  !-----------------------------------------------------------------------------
+  if (glat == rlat) then
+    aj = 0.0
+  elseif (glat < rlat) then
+    aj = (rlat - lat2d(ni,nj)) / (lat2d(ni,nj+1) - lat2d(ni,nj))
+  elseif (rlat < glat) then
+    aj = (rlat - lat2d(ni,nj)) / (lat2d(ni,nj) - lat2d(ni,nj-1))
+    !STEVE: should be negative
+  endif
+  rj = REAL(nj,r_size) + aj
+
+  ! Set flags to mark rlon outside of map range:
+  if (ri < 1) then
+    ri = 0
+  elseif(ri >= nlon+1) then
+    ri = nlon+1
+  endif
+
+  if (rj < 1) then
+    rj = 0
+  elseif (rj >= nlat+1) then
+    rj = nlat+1
+  endif
+
+  ! if (dodebug .and. (ri > nlon .or. ri < 1)) then
+  if (dodebug) then
+    WRITE(6,*) "================="
+    WRITE(6,*) "In common_obs_mom6.f90::phys2ij,"
+    WRITE(6,*) "-----------------"
+    WRITE(6,*) "rlon = ", rlon
+    if (dodebug) WRITE(6,*) "xlon = ", xlon
+    WRITE(6,*) "glon = ", glon
+    WRITE(6,*) "ni = ", ni
+    WRITE(6,*) "ai = ", ai
+    WRITE(6,*) "ri = ", ri
+    WRITE(6,*) "lon0 = ", lon0
+    WRITE(6,*) "lonf = ", lonf
+    WRITE(6,*) "-----------------"
+    WRITE(6,*) "rlat = ", rlat
+    if (dodebug) WRITE(6,*) "xlat = ", xlat
+    WRITE(6,*) "glat = ", glat
+    WRITE(6,*) "nj = ", nj
+    WRITE(6,*) "aj = ", aj
+    WRITE(6,*) "rj = ", rj
+    WRITE(6,*) "lat0 = ", lat0
+    WRITE(6,*) "latf = ", latf
+    WRITE(6,*) "================="
+  endif
+
+  if (CEILING(ri) < 2 .OR. nlon+1 < CEILING(ri)) RETURN
+  if (CEILING(rj) < 2 .OR. nlat < CEILING(rj)) RETURN
+
+END SUBROUTINE phys2ij
 
 
 SUBROUTINE phys2ij_nearest(rlon,rlat,ri,rj)     !(OCEAN)

@@ -25,7 +25,8 @@ MODULE read_en4
   PUBLIC :: read_en4_nc, argo_data, inspect_obs_data
   PUBLIC :: ocn_profile
   PUBLIC :: select_prof_en4_nc
-  
+  PUBLIC :: OCN_PROFILE_VALID, OCN_PROFILE_NOT_VALID
+
 
   INTEGER,PARAMETER :: OCN_PROFILE_VALID = 1
   INTEGER,PARAMETER :: OCN_PROFILE_NOT_VALID = 4
