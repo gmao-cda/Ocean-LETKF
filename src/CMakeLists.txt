@@ -133,7 +133,7 @@ install(TARGETS OCN.superob.x)
 
 # verification
 set(xname OCN.verify_en4.x)
-add_executable(${xname} obs/verify_en4_tprof.f90)
+add_executable(${xname} obs/verify_en4_prof.f90)
 target_link_libraries(${xname} PRIVATE OCN.letkf NetCDF::NetCDF_Fortran HDF5::HDF5)
 set_target_properties (${xname}  PROPERTIES Fortran_PREPROCESS ON) 
 target_compile_definitions(${xname} PRIVATE DYNAMIC)
